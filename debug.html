@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NN Playground Debug</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .status { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        canvas { border: 1px solid #000; margin: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Neural Network Playground Debug</h1>
+    
+    <div id="status-container">
+        <div class="status" id="tf-status">Checking TensorFlow.js...</div>
+        <div class="status" id="canvas-status">Checking Canvas...</div>
+        <div class="status" id="init-status">Checking Initialization...</div>
+    </div>
+    
+    <div>
+        <h3>Test Canvas</h3>
+        <canvas id="test-canvas" width="200" height="200"></canvas>
+    </div>
+    
+    <div>
+        <button onclick="testModel()">Test Simple Model</button>
+        <div id="model-result"></div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+    <script>
+        function updateStatus(id, message, isSuccess = true) {
+            const element = document.getElementById(id);
+            element.textContent = message;
+            element.className = 'status ' + (isSuccess ? 'success' : 'error');
+        }
+        
+        async function runDiagnostics() {
+            // Test TensorFlow.js
+            try {
+                if (typeof tf === 'undefined') {
+                    updateStatus('tf-status', 'TensorFlow.js not loaded!', false);
+                    return;
+                }
+                updateStatus('tf-status', `TensorFlow.js loaded successfully! Version: ${tf.version.tfjs}`);
+                
+                // Test basic tensor operations
+                const a = tf.tensor([1, 2, 3]);
+                const b = tf.tensor([4, 5, 6]);
+                const c = a.add(b);
+                console.log('Basic tensor test:', await c.data());
+                a.dispose();
+                b.dispose();
+                c.dispose();
+                
+            } catch (error) {
+                updateStatus('tf-status', `TensorFlow.js error: ${error.message}`, false);
+                return;
+            }
+            
+            // Test Canvas
+            try {
+                const canvas = document.getElementById('test-canvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Draw a simple test pattern
+                ctx.fillStyle = '#ff0000';
+                ctx.fillRect(10, 10, 50, 50);
+                ctx.fillStyle = '#0000ff';
+                ctx.fillRect(60, 60, 50, 50);
+                ctx.strokeStyle = '#000000';
+                ctx.strokeRect(0, 0, 200, 200);
+                
+                updateStatus('canvas-status', 'Canvas working correctly!');
+            } catch (error) {
+                updateStatus('canvas-status', `Canvas error: ${error.message}`, false);
+                return;
+            }
+            
+            // Test initialization
+            try {
+                updateStatus('init-status', 'All systems operational!');
+            } catch (error) {
+                updateStatus('init-status', `Initialization error: ${error.message}`, false);
+            }
+        }
+        
+        async function testModel() {
+            try {
+                // Create a simple model
+                const model = tf.sequential({
+                    layers: [
+                        tf.layers.dense({inputShape: [2], units: 4, activation: 'relu'}),
+                        tf.layers.dense({units: 1, activation: 'sigmoid'})
+                    ]
+                });
+                
+                model.compile({
+                    optimizer: tf.train.adam(0.01),
+                    loss: 'binaryCrossentropy'
+                });
+                
+                // Test prediction
+                const testInput = tf.tensor2d([[0.5, 0.5]]);
+                const prediction = model.predict(testInput);
+                const result = await prediction.data();
+                
+                document.getElementById('model-result').innerHTML = 
+                    `<p>Model created successfully!</p>
+                     <p>Test input: [0.5, 0.5]</p>
+                     <p>Prediction: ${result[0].toFixed(4)}</p>`;
+                
+                // Clean up
+                testInput.dispose();
+                prediction.dispose();
+                model.dispose();
+                
+            } catch (error) {
+                document.getElementById('model-result').innerHTML = 
+                    `<p style="color: red;">Model test failed: ${error.message}</p>`;
+                console.error('Model test error:', error);
+            }
+        }
+        
+        // Run diagnostics when page loads
+        setTimeout(runDiagnostics, 1000);
+    </script>
+</body>
+</html> 

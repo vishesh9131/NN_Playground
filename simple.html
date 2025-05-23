@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Neural Network Playground</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .control-group label {
+            min-width: 120px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        select, input[type="range"] {
+            flex: 1;
+            padding: 5px;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            display: block;
+            margin: 10px auto;
+        }
+        .status {
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+        }
+        h1 { text-align: center; color: #333; }
+        h3 { margin-top: 0; color: #555; }
+    </style>
+</head>
+<body>
+    <h1>Simple Neural Network Playground</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h3>Controls & Data</h3>
+            <div class="controls">
+                <div class="control-group">
+                    <label>Dataset:</label>
+                    <select id="dataset">
+                        <option value="circle">Circle</option>
+                        <option value="xor">XOR</option>
+                        <option value="spiral">Spiral</option>
+                    </select>
+                </div>
+                
+                <div class="control-group">
+                    <label>Hidden Neurons:</label>
+                    <input type="range" id="neurons" min="2" max="16" value="8">
+                    <span id="neurons-value">8</span>
+                </div>
+                
+                <div class="control-group">
+                    <label>Learning Rate:</label>
+                    <input type="range" id="lr" min="0.001" max="0.1" step="0.001" value="0.01">
+                    <span id="lr-value">0.01</span>
+                </div>
+                
+                <div class="control-group">
+                    <label>Activation:</label>
+                    <select id="activation">
+                        <option value="relu">ReLU</option>
+                        <option value="tanh">Tanh</option>
+                        <option value="sigmoid">Sigmoid</option>
+                    </select>
+                </div>
+                
+                <div class="control-group">
+                    <button id="train-btn">Start Training</button>
+                    <button id="reset-btn">Reset</button>
+                </div>
+                
+                <div class="status">
+                    <div>Iteration: <span id="iteration">0</span></div>
+                    <div>Loss: <span id="loss">-</span></div>
+                </div>
+            </div>
+            
+            <h3>Training Data</h3>
+            <canvas id="data-canvas" width="300" height="300"></canvas>
+            <div style="font-size: 12px; text-align: center; color: #666;">
+                Click to add blue points, right-click for red points
+            </div>
+        </div>
+        
+        <div class="panel">
+            <h3>Neural Network & Results</h3>
+            <canvas id="network-canvas" width="300" height="200"></canvas>
+            
+            <h3>Decision Boundary</h3>
+            <canvas id="output-canvas" width="300" height="300"></canvas>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+    <script>
+        // Global variables
+        let model = null;
+        let trainingData = [];
+        let isTraining = false;
+        let iteration = 0;
+
+        // Get DOM elements
+        const dataCanvas = document.getElementById('data-canvas');
+        const networkCanvas = document.getElementById('network-canvas');
+        const outputCanvas = document.getElementById('output-canvas');
+        const dataCtx = dataCanvas.getContext('2d');
+        const networkCtx = networkCanvas.getContext('2d');
+        const outputCtx = outputCanvas.getContext('2d');
+
+        // Control elements
+        const datasetSelect = document.getElementById('dataset');
+        const neuronsSlider = document.getElementById('neurons');
+        const neuronsValue = document.getElementById('neurons-value');
+        const lrSlider = document.getElementById('lr');
+        const lrValue = document.getElementById('lr-value');
+        const activationSelect = document.getElementById('activation');
+        const trainBtn = document.getElementById('train-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const iterationSpan = document.getElementById('iteration');
+        const lossSpan = document.getElementById('loss');
+
+        // Initialize when TensorFlow.js is ready
+        async function init() {
+            if (typeof tf === 'undefined') {
+                alert('TensorFlow.js failed to load. Please check your internet connection.');
+                return;
+            }
+
+            console.log('TensorFlow.js loaded successfully!');
+            
+            // Set up event listeners
+            neuronsSlider.addEventListener('input', () => {
+                neuronsValue.textContent = neuronsSlider.value;
+                createModel();
+            });
+
+            lrSlider.addEventListener('input', () => {
+                lrValue.textContent = lrSlider.value;
+                createModel();
+            });
+
+            datasetSelect.addEventListener('change', generateData);
+            activationSelect.addEventListener('change', createModel);
+            trainBtn.addEventListener('click', toggleTraining);
+            resetBtn.addEventListener('click', resetModel);
+
+            // Canvas events
+            dataCanvas.addEventListener('click', addPoint);
+            dataCanvas.addEventListener('contextmenu', addPoint);
+
+            // Initialize
+            generateData();
+            createModel();
+            drawNetwork();
+        }
+
+        // Generate training data
+        function generateData() {
+            trainingData = [];
+            const type = datasetSelect.value;
+            const n = 50; // number of points per class
+
+            if (type === 'circle') {
+                // Circle data
+                for (let i = 0; i < n * 2; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const radius = Math.random() * 120 + 20;
+                    const x = 150 + Math.cos(angle) * radius;
+                    const y = 150 + Math.sin(angle) * radius;
+                    const label = radius < 80 ? 1 : 0;
+                    trainingData.push({ x, y, label });
+                }
+            } else if (type === 'xor') {
+                // XOR data
+                for (let i = 0; i < n * 2; i++) {
+                    const x = Math.random() * 280 + 10;
+                    const y = Math.random() * 280 + 10;
+                    const label = (x < 150 && y < 150) || (x >= 150 && y >= 150) ? 1 : 0;
+                    trainingData.push({ x, y, label });
+                }
+            } else if (type === 'spiral') {
+                // Spiral data
+                for (let c = 0; c < 2; c++) {
+                    for (let i = 0; i < n; i++) {
+                        const t = i / n * 3 * Math.PI;
+                        const r = t * 10;
+                        const x = 150 + Math.cos(t + c * Math.PI) * r;
+                        const y = 150 + Math.sin(t + c * Math.PI) * r;
+                        if (x >= 0 && x < 300 && y >= 0 && y < 300) {
+                            trainingData.push({ x, y, label: c });
+                        }
+                    }
+                }
+            }
+
+            drawData();
+            if (model) {
+                drawDecisionBoundary();
+            }
+        }
+
+        // Create neural network model
+        function createModel() {
+            if (model) {
+                model.dispose();
+            }
+
+            const neurons = parseInt(neuronsSlider.value);
+            const lr = parseFloat(lrSlider.value);
+            const activation = activationSelect.value;
+
+            model = tf.sequential({
+                layers: [
+                    tf.layers.dense({
+                        inputShape: [2],
+                        units: neurons,
+                        activation: activation
+                    }),
+                    tf.layers.dense({
+                        units: 1,
+                        activation: 'sigmoid'
+                    })
+                ]
+            });
+
+            model.compile({
+                optimizer: tf.train.adam(lr),
+                loss: 'binaryCrossentropy',
+                metrics: ['accuracy']
+            });
+
+            iteration = 0;
+            iterationSpan.textContent = '0';
+            lossSpan.textContent = '-';
+
+            drawNetwork();
+            if (trainingData.length > 0) {
+                drawDecisionBoundary();
+            }
+        }
+
+        // Add data point on click
+        function addPoint(e) {
+            e.preventDefault();
+            const rect = dataCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const label = e.type === 'contextmenu' ? 0 : 1;
+
+            trainingData.push({ x, y, label });
+            drawData();
+            if (model) {
+                drawDecisionBoundary();
+            }
+        }
+
+        // Draw training data
+        function drawData() {
+            dataCtx.fillStyle = 'white';
+            dataCtx.fillRect(0, 0, 300, 300);
+
+            trainingData.forEach(point => {
+                dataCtx.beginPath();
+                dataCtx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+                dataCtx.fillStyle = point.label ? '#007bff' : '#dc3545';
+                dataCtx.fill();
+                dataCtx.strokeStyle = 'white';
+                dataCtx.lineWidth = 1;
+                dataCtx.stroke();
+            });
+        }
+
+        // Draw neural network visualization
+        function drawNetwork() {
+            networkCtx.fillStyle = 'white';
+            networkCtx.fillRect(0, 0, 300, 200);
+
+            const neurons = parseInt(neuronsSlider.value);
+            
+            // Draw layers
+            const layers = [2, neurons, 1]; // input, hidden, output
+            const layerX = [50, 150, 250];
+            
+            layers.forEach((layerSize, layerIdx) => {
+                const x = layerX[layerIdx];
+                const spacing = 160 / (layerSize + 1);
+                
+                for (let i = 0; i < layerSize; i++) {
+                    const y = 20 + (i + 1) * spacing;
+                    
+                    // Draw neuron
+                    networkCtx.beginPath();
+                    networkCtx.arc(x, y, 8, 0, Math.PI * 2);
+                    networkCtx.fillStyle = layerIdx === 0 ? '#28a745' : 
+                                          layerIdx === 1 ? '#007bff' : '#dc3545';
+                    networkCtx.fill();
+                    networkCtx.strokeStyle = '#333';
+                    networkCtx.lineWidth = 1;
+                    networkCtx.stroke();
+                }
+            });
+
+            // Labels
+            networkCtx.fillStyle = '#333';
+            networkCtx.font = '12px Arial';
+            networkCtx.textAlign = 'center';
+            networkCtx.fillText('Input', 50, 190);
+            networkCtx.fillText('Hidden', 150, 190);
+            networkCtx.fillText('Output', 250, 190);
+        }
+
+        // Draw decision boundary
+        function drawDecisionBoundary() {
+            if (!model || trainingData.length === 0) return;
+
+            const resolution = 10;
+            const imageData = outputCtx.createImageData(300, 300);
+            const data = imageData.data;
+
+            // Initialize to white
+            for (let i = 0; i < data.length; i += 4) {
+                data[i] = 255;     // R
+                data[i + 1] = 255; // G
+                data[i + 2] = 255; // B
+                data[i + 3] = 255; // A
+            }
+
+            // Create grid predictions
+            const gridInputs = [];
+            for (let y = 0; y < 300; y += resolution) {
+                for (let x = 0; x < 300; x += resolution) {
+                    gridInputs.push([x / 300, y / 300]);
+                }
+            }
+
+            tf.tidy(() => {
+                const inputs = tf.tensor2d(gridInputs);
+                const predictions = model.predict(inputs);
+                const predValues = predictions.dataSync();
+
+                let idx = 0;
+                for (let y = 0; y < 300; y += resolution) {
+                    for (let x = 0; x < 300; x += resolution) {
+                        const pred = predValues[idx++];
+                        
+                        // Fill area around this point
+                        for (let dy = 0; dy < resolution && y + dy < 300; dy++) {
+                            for (let dx = 0; dx < resolution && x + dx < 300; dx++) {
+                                const pixelIdx = ((y + dy) * 300 + (x + dx)) * 4;
+                                
+                                if (pred > 0.5) {
+                                    data[pixelIdx] = 200;     // Light blue
+                                    data[pixelIdx + 1] = 220;
+                                    data[pixelIdx + 2] = 255;
+                                } else {
+                                    data[pixelIdx] = 255;     // Light red
+                                    data[pixelIdx + 1] = 220;
+                                    data[pixelIdx + 2] = 200;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            outputCtx.putImageData(imageData, 0, 0);
+
+            // Draw data points on top
+            trainingData.forEach(point => {
+                outputCtx.beginPath();
+                outputCtx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+                outputCtx.fillStyle = point.label ? '#007bff' : '#dc3545';
+                outputCtx.fill();
+                outputCtx.strokeStyle = 'white';
+                outputCtx.lineWidth = 2;
+                outputCtx.stroke();
+            });
+        }
+
+        // Training functions
+        async function toggleTraining() {
+            if (isTraining) {
+                isTraining = false;
+                trainBtn.textContent = 'Start Training';
+                trainBtn.disabled = false;
+            } else {
+                if (trainingData.length < 4) {
+                    alert('Need at least 4 data points to train!');
+                    return;
+                }
+                isTraining = true;
+                trainBtn.textContent = 'Stop Training';
+                await trainLoop();
+            }
+        }
+
+        async function trainLoop() {
+            while (isTraining) {
+                await trainStep();
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+
+        async function trainStep() {
+            if (trainingData.length === 0) return;
+
+            const xs = trainingData.map(p => [p.x / 300, p.y / 300]);
+            const ys = trainingData.map(p => [p.label]);
+
+            const xsTensor = tf.tensor2d(xs);
+            const ysTensor = tf.tensor2d(ys);
+
+            const history = await model.trainOnBatch(xsTensor, ysTensor);
+            
+            iteration++;
+            iterationSpan.textContent = iteration;
+            lossSpan.textContent = history.toFixed(4);
+
+            xsTensor.dispose();
+            ysTensor.dispose();
+
+            if (iteration % 10 === 0) {
+                drawDecisionBoundary();
+            }
+        }
+
+        function resetModel() {
+            isTraining = false;
+            trainBtn.textContent = 'Start Training';
+            createModel();
+        }
+
+        // Start the application
+        setTimeout(init, 1000);
+    </script>
+</body>
+</html> 
